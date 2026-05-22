@@ -1,3 +1,6 @@
 *.o
 *.out
 /coroutines
+/build
+/.cache
+/compile_commands.json
