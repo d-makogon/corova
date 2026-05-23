@@ -11,6 +11,7 @@ static const unsigned COROUTINE_STACK_SIZE = 1024 * 1024;
 static unsigned cur_coroutine_index = 0;
 
 typedef struct {
+  void *stack_base;
   void *sp;
 } CoroutineContext;
 
@@ -24,21 +25,28 @@ void coroutine_init(void) {
   CoroutineContext ctx = {0};
   da_append(&contexts, ctx);
 }
+void coroutine_switch_ctx(unsigned coroutine_idx);
 
-void coroutine_fail_on_normal_return(void) {
-  fprintf(stderr, "Coroutine %u returned. It is unimplemented\n",
-          cur_coroutine_index);
-  abort();
+void coroutine_finish(void) {
+  // Remove the context.
+  CoroutineContext *ctx = &contexts.items[cur_coroutine_index];
+  free((unsigned char *)ctx->stack_base);
+  // Move the last context into the place of the removed one.
+  contexts.items[cur_coroutine_index] = contexts.items[contexts.count - 1];
+  contexts.count--;
+  fprintf(stderr, "Coroutine %u returned, context.count = %zu.\n",
+          cur_coroutine_index, contexts.count);
+  coroutine_switch_ctx((cur_coroutine_index + 1) % contexts.count);
 }
 
 void coroutine_go(void (*job)(void)) {
   assert(job);
-  void *stack = aligned_alloc(16, COROUTINE_STACK_SIZE);
-  stack = (unsigned char *)stack + COROUTINE_STACK_SIZE;
-  assert(stack);
+  void *stack_base = aligned_alloc(16, COROUTINE_STACK_SIZE);
+  assert(stack_base);
+  void *stack = (unsigned char *)stack_base + COROUTINE_STACK_SIZE;
   void **stack_p = stack;
-  *(--stack_p) = 0;                                // Unused.
-  *(--stack_p) = &coroutine_fail_on_normal_return; // Initial LR.
+  *(--stack_p) = 0;                 // Unused.
+  *(--stack_p) = &coroutine_finish; // Initial LR.
   *(--stack_p) = job; // Branch destination. On coroutine entry it's its job
                       // function address.
   *(--stack_p) = 0;   // No initial frame.
@@ -54,15 +62,18 @@ void coroutine_go(void (*job)(void)) {
   *(--stack_p) = 0;
 
   CoroutineContext ctx = {0};
+  ctx.stack_base = stack_base;
   ctx.sp = stack_p;
   da_append(&contexts, ctx);
-  printf("Coroutine #%zu added, sp is %p, saved fp is %p\n",
-         da_count(&contexts), ctx.sp, NULL);
+  printf("Coroutine #%zu added, sp is %p, stack base is %p\n",
+         da_count(&contexts), ctx.sp, stack_base);
 }
 
 __attribute__((naked)) void coroutine_yield() {
   __asm__ volatile(
-      "str x30, [sp, #-16]!\n" // Save x30. Note that here it is kind of spare.
+      "str x30, [sp, #-16]!\n" // Save x30. Note that here it is kind of spare
+                               // as we also save it below, but this slot is
+                               // needed to store the final return address
       "stp x29, x30, [sp, #-16]!\n" // Save FP and LR (the address to branch to
                                     // after waking up).
       "stp x19, x20, [sp, #-16]!\n" // Callee saved registers
@@ -88,15 +99,20 @@ __attribute__((naked)) void coroutine_restore_ctx(void *sp) {
                    "br x1");
 }
 
+void coroutine_switch_ctx(unsigned coroutine_idx) {
+  printf("Switching to coroutine #%u\n", coroutine_idx);
+  CoroutineContext *next_coroutine_ctx = &contexts.items[coroutine_idx];
+  assert(next_coroutine_ctx);
+  cur_coroutine_index = coroutine_idx;
+  coroutine_restore_ctx(next_coroutine_ctx->sp);
+}
+
 void coroutine_yield_impl(void *sp) {
   CoroutineContext *cur_ctx = &contexts.items[cur_coroutine_index];
   cur_ctx->sp = sp;
   printf("Yielding coroutine #%u\n", cur_coroutine_index);
   unsigned next_coroutine = (cur_coroutine_index + 1) % da_count(&contexts);
-  CoroutineContext *next_coroutine_ctx = &contexts.items[next_coroutine];
-  assert(next_coroutine_ctx);
-  cur_coroutine_index = next_coroutine;
-  coroutine_restore_ctx(next_coroutine_ctx->sp);
+  coroutine_switch_ctx(next_coroutine);
 }
 
 void counter(void) {
@@ -110,7 +126,7 @@ int main(int argc, char **argv) {
   coroutine_init();
   coroutine_go(counter);
   coroutine_go(counter);
-  while (1) {
+  while (contexts.count > 1) {
     coroutine_yield();
   }
 
