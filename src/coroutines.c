@@ -14,11 +14,13 @@
 #define LOG(...)
 #endif
 
-static const unsigned COROUTINE_STACK_SIZE = 1024 * 1024;
+static const unsigned COROUTINE_STACK_SIZE = 4 * 1024;
 
-static unsigned cur_coroutine_index = 0;
+static unsigned cur_context_index = 0;
+static unsigned next_coroutine_id = 0;
 
 typedef struct {
+  unsigned id;
   void *stack_base;
   void *sp;
 } CoroutineContext;
@@ -31,20 +33,22 @@ static Contexts contexts = {0};
 
 void coroutine_init(void) {
   CoroutineContext ctx = {0};
+  assert(next_coroutine_id == 0);
+  next_coroutine_id++;
   da_append(&contexts, ctx);
 }
 void coroutine_switch_ctx(unsigned coroutine_idx);
 
 void coroutine_finish(void) {
   // Remove the context.
-  CoroutineContext *ctx = &contexts.items[cur_coroutine_index];
+  CoroutineContext *ctx = &contexts.items[cur_context_index];
   free((unsigned char *)ctx->stack_base);
   // Move the last context into the place of the removed one.
-  contexts.items[cur_coroutine_index] = contexts.items[contexts.count - 1];
+  contexts.items[cur_context_index] = contexts.items[contexts.count - 1];
   contexts.count--;
   LOG("Coroutine %u returned, context.count = %zu.\n", cur_coroutine_index,
       contexts.count);
-  coroutine_switch_ctx((cur_coroutine_index + 1) % contexts.count);
+  coroutine_switch_ctx((cur_context_index + 1) % contexts.count);
 }
 
 void coroutine_go(void (*job)(void *), void *arg) {
@@ -71,6 +75,7 @@ void coroutine_go(void (*job)(void *), void *arg) {
   *(--stack_p) = 0;
 
   CoroutineContext ctx = {0};
+  ctx.id = next_coroutine_id++;
   ctx.stack_base = stack_base;
   ctx.sp = stack_p;
   da_append(&contexts, ctx);
@@ -114,18 +119,18 @@ void coroutine_switch_ctx(unsigned coroutine_idx) {
   LOG("Switching to coroutine #%u\n", coroutine_idx);
   CoroutineContext *next_coroutine_ctx = &contexts.items[coroutine_idx];
   assert(next_coroutine_ctx);
-  cur_coroutine_index = coroutine_idx;
+  cur_context_index = coroutine_idx;
   coroutine_restore_ctx(next_coroutine_ctx->sp);
 }
 
 void coroutine_yield_impl(void *sp) {
-  CoroutineContext *cur_ctx = &contexts.items[cur_coroutine_index];
+  CoroutineContext *cur_ctx = &contexts.items[cur_context_index];
   cur_ctx->sp = sp;
   LOG("Yielding coroutine #%u\n", cur_coroutine_index);
-  unsigned next_coroutine = (cur_coroutine_index + 1) % da_count(&contexts);
+  unsigned next_coroutine = (cur_context_index + 1) % da_count(&contexts);
   coroutine_switch_ctx(next_coroutine);
 }
 
-unsigned coroutine_id(void) { return cur_coroutine_index; }
+unsigned coroutine_id(void) { return contexts.items[cur_context_index].id; }
 
 unsigned coroutines_alive(void) { return contexts.count; }

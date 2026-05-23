@@ -20,6 +20,11 @@ int main(int argc, char **argv) {
   while (coroutines_alive() > 1) {
     coroutine_yield();
   }
+  coroutine_go(counter, (void *)5);
+  coroutine_go(counter, (void *)10);
+  while (coroutines_alive() > 1) {
+    coroutine_yield();
+  }
 
   return 0;
 }
