@@ -60,7 +60,7 @@ static CoroutineContext *cur_context(void) {
 }
 
 void coroutine_init(void) {
-  hm_init(&contexts, 32, coro_hash, coro_cmp);
+  hm_init(&contexts, coro_hash, coro_cmp);
   CoroutineContext ctx = {0};
   assert(next_coroutine_id == 0 &&
          "Must be called before adding any coroutines");
