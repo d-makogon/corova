@@ -7,6 +7,7 @@
 #include <stdlib.h>
 
 #include <clib/dyn_array.h>
+#include <clib/hash_map.h>
 
 #ifdef ENABLE_LOG
 #define LOG(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
@@ -16,6 +17,7 @@
 
 static const unsigned COROUTINE_STACK_SIZE = 4 * 1024;
 
+static unsigned cur_context_id = 0;
 static unsigned cur_context_index = 0;
 static unsigned next_coroutine_id = 0;
 
@@ -26,28 +28,55 @@ typedef struct {
 } CoroutineContext;
 
 typedef struct {
-  DYN_ARRAY_FIELDS(CoroutineContext);
+  unsigned key; // The context ID
+  CoroutineContext value;
+} ContextIDPair;
+
+static unsigned coro_hash(const void *p) { return *(const unsigned *)p; }
+static bool coro_cmp(const void *p1, const void *p2) {
+  return *(const unsigned *)p1 == *(const unsigned *)p2;
+}
+
+typedef struct {
+  HASH_MAP_FIELDS(ContextIDPair)
 } Contexts;
 
 static Contexts contexts = {0};
 
-void coroutine_init(void) {
-  CoroutineContext ctx = {0};
-  assert(next_coroutine_id == 0);
-  next_coroutine_id++;
-  da_append(&contexts, ctx);
+static void add_context(CoroutineContext *ctx) {
+  hm_put(&contexts, (ContextIDPair){.key = ctx->id, .value = *ctx});
 }
+
+static CoroutineContext *get_context(unsigned id) {
+  CoroutineContext *ctx = hm_get(&contexts, id);
+  if (!ctx)
+    LOG("Do not have ctx id %u", id);
+  assert(ctx && "Must have context");
+  return ctx;
+}
+
+static CoroutineContext *cur_context(void) {
+  return get_context(cur_context_id);
+}
+
+void coroutine_init(void) {
+  hm_init(&contexts, 32, coro_hash, coro_cmp);
+  CoroutineContext ctx = {0};
+  assert(next_coroutine_id == 0 &&
+         "Must be called before adding any coroutines");
+  add_context(&ctx);
+  next_coroutine_id++;
+}
+
 void coroutine_switch_ctx(unsigned coroutine_idx);
 
 void coroutine_finish(void) {
   // Remove the context.
-  CoroutineContext *ctx = &contexts.items[cur_context_index];
+  CoroutineContext *ctx = cur_context();
+  assert(ctx && "Must have current context");
   free((unsigned char *)ctx->stack_base);
-  // Move the last context into the place of the removed one.
-  contexts.items[cur_context_index] = contexts.items[contexts.count - 1];
-  contexts.count--;
-  LOG("Coroutine %u returned, context.count = %zu.\n", cur_coroutine_index,
-      contexts.count);
+  hm_remove(&contexts, ctx->id);
+  LOG("Coroutine %u returned, context.count = %zu.\n", ctx->id, contexts.count);
   coroutine_switch_ctx((cur_context_index + 1) % contexts.count);
 }
 
@@ -78,7 +107,8 @@ void coroutine_go(void (*job)(void *), void *arg) {
   ctx.id = next_coroutine_id++;
   ctx.stack_base = stack_base;
   ctx.sp = stack_p;
-  da_append(&contexts, ctx);
+
+  add_context(&ctx);
   LOG("Coroutine #%zu added, sp is %p, stack base is %p\n", da_count(&contexts),
       ctx.sp, stack_base);
 }
@@ -115,22 +145,24 @@ __attribute__((naked)) void coroutine_restore_ctx(void *sp) {
                "br x1");
 }
 
-void coroutine_switch_ctx(unsigned coroutine_idx) {
-  LOG("Switching to coroutine #%u\n", coroutine_idx);
-  CoroutineContext *next_coroutine_ctx = &contexts.items[coroutine_idx];
+void coroutine_switch_ctx(unsigned coroutine_index) {
+  LOG("Switching to coroutine at index %u\n", coroutine_index);
+  CoroutineContext *next_coroutine_ctx = &contexts.items[coroutine_index].value;
   assert(next_coroutine_ctx);
-  cur_context_index = coroutine_idx;
+  LOG("Next coroutine id: #%u\n", next_coroutine_ctx->id);
+  cur_context_id = next_coroutine_ctx->id;
+  cur_context_index = coroutine_index;
   coroutine_restore_ctx(next_coroutine_ctx->sp);
 }
 
 void coroutine_yield_impl(void *sp) {
-  CoroutineContext *cur_ctx = &contexts.items[cur_context_index];
+  CoroutineContext *cur_ctx = cur_context();
   cur_ctx->sp = sp;
-  LOG("Yielding coroutine #%u\n", cur_coroutine_index);
-  unsigned next_coroutine = (cur_context_index + 1) % da_count(&contexts);
-  coroutine_switch_ctx(next_coroutine);
+  LOG("Yielding coroutine #%u\n", cur_ctx->id);
+  unsigned next_coroutine_index = (cur_context_index + 1) % da_count(&contexts);
+  coroutine_switch_ctx(next_coroutine_index);
 }
 
-unsigned coroutine_id(void) { return contexts.items[cur_context_index].id; }
+unsigned coroutine_id(void) { return cur_context()->id; }
 
 unsigned coroutines_alive(void) { return contexts.count; }
