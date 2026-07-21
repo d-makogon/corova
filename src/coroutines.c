@@ -8,6 +8,7 @@
 
 #include <clib/dyn_array.h>
 #include <clib/hash_map.h>
+#include <clib/linked_list.h>
 
 #ifdef ENABLE_LOG
 #define LOG(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
@@ -18,7 +19,6 @@
 static const unsigned COROUTINE_STACK_SIZE = 4 * 1024;
 
 static unsigned cur_context_id = 0;
-static unsigned cur_context_index = 0;
 static unsigned next_coroutine_id = 0;
 
 typedef struct {
@@ -41,7 +41,18 @@ typedef struct {
   HASH_MAP_FIELDS(ContextIDPair)
 } Contexts;
 
+typedef struct CoroIDListNode {
+  LINKED_LIST_NODE_FIELDS(unsigned, struct CoroIDListNode);
+} CoroIDListNode;
+
+typedef struct {
+  LINKED_LIST_FIELDS(CoroIDListNode);
+} CoroIDsList;
+
+typedef CoroIDsList CoroutineIDsList;
+
 static Contexts contexts = {0};
+static CoroIDsList ready_coro_queue = {0};
 
 static void add_context(CoroutineContext *ctx) {
   hm_put(&contexts, (ContextIDPair){.key = ctx->id, .value = *ctx});
@@ -57,6 +68,17 @@ static CoroutineContext *cur_context(void) {
   return get_context(cur_context_id);
 }
 
+static void push_ready_coroutine(unsigned id) {
+  list_append(&ready_coro_queue, id);
+}
+
+static unsigned pop_ready_coroutine() {
+  assert(!list_empty(&ready_coro_queue) && "Must have available coroutines");
+  unsigned id = ready_coro_queue.head->value;
+  list_pop_front(&ready_coro_queue);
+  return id;
+}
+
 void coroutine_init(void) {
   hm_init(&contexts, coro_hash, coro_cmp);
   CoroutineContext ctx = {0};
@@ -66,16 +88,20 @@ void coroutine_init(void) {
   next_coroutine_id++;
 }
 
-void coroutine_switch_ctx(unsigned coroutine_idx);
+static void switch_to_next_ready(void);
 
 void coroutine_finish(void) {
-  // Remove the context.
   CoroutineContext *ctx = cur_context();
-  assert(ctx && "Must have current context");
-  free((unsigned char *)ctx->stack_base);
+  if (ctx->id == 0) {
+    hm_free(&contexts);
+    list_free(&ready_coro_queue);
+    return;
+  }
+
+  free(ctx->stack_base);
   hm_remove(&contexts, ctx->id);
-  LOG("Coroutine %u returned, context.count = %zu.\n", ctx->id, contexts.count);
-  coroutine_switch_ctx((cur_context_index + 1) % contexts.count);
+  LOG("Coroutine %u finished.\n", ctx->id);
+  switch_to_next_ready();
 }
 
 void coroutine_go(void (*job)(void *), void *arg) {
@@ -107,12 +133,14 @@ void coroutine_go(void (*job)(void *), void *arg) {
   ctx.sp = stack_p;
 
   add_context(&ctx);
+  push_ready_coroutine(ctx.id);
   LOG("Coroutine #%zu added, sp is %p, stack base is %p\n", da_count(&contexts),
       ctx.sp, stack_base);
 }
 
-__attribute__((naked)) void coroutine_yield() {
+__attribute__((naked)) void coroutine_yield_asm(bool is_ready) {
   asm volatile(
+      "mov x1, x0\n"
       "stp x30, x0, [sp, #-16]!\n"  // Save x30. Note that here it is kind of
                                     // spare as we also save it below, but this
                                     // slot is needed to store the final return
@@ -126,12 +154,18 @@ __attribute__((naked)) void coroutine_yield() {
       "stp x25, x26, [sp, #-16]!\n"
       "stp x27, x28, [sp, #-16]!\n"
       "mov x0, sp\n"
-      "bl _coroutine_yield_impl");
+      "bl _save_ctx_and_switch_to_next_ready");
   // TODO: save d8, d9, d10, d11, d12, d13, d14, d15, d16, d17, d18, d19,
   //            d20, d21, d22, d23, d24, d25, d26, d27, d28, d29, d30, d31.
 }
 
-__attribute__((naked)) void coroutine_restore_ctx(void *sp) {
+void coroutine_yield(void) { coroutine_yield_asm(/*is_ready=*/true); }
+
+void coroutine_yield_not_ready(void) {
+  coroutine_yield_asm(/*is_ready=*/false);
+}
+
+__attribute__((naked)) static void coroutine_restore_ctx(void *sp) {
   asm volatile("mov sp, x0\n"
                "ldp x27, x28, [sp], #16\n" // Callee saved registers.
                "ldp x25, x26, [sp], #16\n"
@@ -143,22 +177,25 @@ __attribute__((naked)) void coroutine_restore_ctx(void *sp) {
                "br x1");
 }
 
-void coroutine_switch_ctx(unsigned coroutine_index) {
-  LOG("Switching to coroutine at index %u\n", coroutine_index);
-  CoroutineContext *next_coroutine_ctx = &contexts.items[coroutine_index].value;
-  assert(next_coroutine_ctx);
-  LOG("Next coroutine id: #%u\n", next_coroutine_ctx->id);
+static void coroutine_switch_ctx(unsigned coroutine_id) {
+  LOG("Switching to coroutine #%u\n", coroutine_id);
+  CoroutineContext *next_coroutine_ctx = get_context(coroutine_id);
   cur_context_id = next_coroutine_ctx->id;
-  cur_context_index = coroutine_index;
   coroutine_restore_ctx(next_coroutine_ctx->sp);
 }
 
-void coroutine_yield_impl(void *sp) {
+static void switch_to_next_ready(void) {
+  coroutine_switch_ctx(pop_ready_coroutine());
+}
+
+__attribute__((used)) static void
+save_ctx_and_switch_to_next_ready(void *sp, bool is_ready) {
   CoroutineContext *cur_ctx = cur_context();
   cur_ctx->sp = sp;
-  LOG("Yielding coroutine #%u\n", cur_ctx->id);
-  unsigned next_coroutine_index = (cur_context_index + 1) % da_count(&contexts);
-  coroutine_switch_ctx(next_coroutine_index);
+  LOG("Yielding coroutine #%u, is ready = %d\n", cur_ctx->id, is_ready);
+  if (is_ready)
+    push_ready_coroutine(cur_ctx->id);
+  switch_to_next_ready();
 }
 
 unsigned coroutine_id(void) { return cur_context()->id; }
