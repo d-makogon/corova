@@ -49,8 +49,6 @@ static void add_context(CoroutineContext *ctx) {
 
 static CoroutineContext *get_context(unsigned id) {
   CoroutineContext *ctx = hm_get(&contexts, id);
-  if (!ctx)
-    LOG("Do not have ctx id %u", id);
   assert(ctx && "Must have context");
   return ctx;
 }
