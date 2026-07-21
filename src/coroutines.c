@@ -1,6 +1,8 @@
 #include <corova/coroutines.h>
 
 #include <assert.h>
+#include <errno.h>
+#include <poll.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -22,9 +24,16 @@ static unsigned cur_context_id = 0;
 static unsigned next_coroutine_id = 0;
 
 typedef struct {
+  int fd;
+  EventType events_mask;
+  bool satisfied;
+} WaitInfo;
+
+typedef struct {
   unsigned id;
   void *stack_base;
   void *sp;
+  WaitInfo wait_info;
 } CoroutineContext;
 
 typedef struct {
@@ -51,8 +60,13 @@ typedef struct {
 
 typedef CoroIDsList CoroutineIDsList;
 
+typedef struct {
+  DYN_ARRAY_FIELDS(unsigned)
+} CoroutineIDs;
+
 static Contexts contexts = {0};
 static CoroIDsList ready_coro_queue = {0};
+static CoroutineIDs waiting_coroutines = {0};
 
 static void add_context(CoroutineContext *ctx) {
   hm_put(&contexts, (ContextIDPair){.key = ctx->id, .value = *ctx});
@@ -77,6 +91,61 @@ static unsigned pop_ready_coroutine() {
   unsigned id = ready_coro_queue.head->value;
   list_pop_front(&ready_coro_queue);
   return id;
+}
+
+static void poll_waiting_coroutines(void) {
+  assert(cur_context()->id == 0 &&
+         "Must only be called from the main coroutine");
+
+  typedef struct {
+    DYN_ARRAY_FIELDS(struct pollfd);
+  } PollFDs;
+
+  PollFDs poll_fds = {0};
+  da_reserve(&poll_fds, waiting_coroutines.count);
+  da_foreach(&waiting_coroutines, coro_id) {
+    CoroutineContext *coroutine = get_context(*coro_id);
+    assert(!coroutine->wait_info.satisfied &&
+           "Request must not be satisfied yet");
+    struct pollfd pfd = {0};
+    pfd.fd = coroutine->wait_info.fd;
+    if (coroutine->wait_info.events_mask & CORO_WAIT_READ)
+      pfd.events = POLLIN;
+    if (coroutine->wait_info.events_mask & CORO_WAIT_WRITE)
+      pfd.events = POLLOUT;
+    LOG("Adding coroutine #%u to wait on fd %d for events %u\n", coroutine->id,
+        pfd.fd, pfd.events);
+    da_append(&poll_fds, pfd);
+  }
+
+  int timeout = 0;
+  if (list_empty(&ready_coro_queue)) {
+    LOG("Blocking indefinitely until there are ready coroutines...\n");
+    timeout = -1;
+  }
+
+  int ret = poll(poll_fds.items, poll_fds.count, timeout);
+  if (ret == -1) {
+    perror("poll failed");
+    abort();
+  }
+
+  unsigned removed_num = 0;
+  da_enumerate(&poll_fds, index, pollfd) {
+    unsigned waiting_index = index - removed_num;
+    unsigned coro_id = waiting_coroutines.items[waiting_index];
+    CoroutineContext *coroutine = get_context(coro_id);
+    assert(coroutine->wait_info.fd == pollfd->fd);
+    if ((pollfd->events & POLLIN && pollfd->revents & POLLIN) ||
+        (pollfd->events & POLLOUT && pollfd->revents & POLLOUT)) {
+      LOG("Coroutine #%u has received events %d, making it ready\n",
+          coroutine->id, pollfd->revents);
+      coroutine->wait_info.satisfied = true;
+      push_ready_coroutine(coroutine->id);
+      da_remove(&waiting_coroutines, waiting_index);
+      removed_num++;
+    }
+  }
 }
 
 void coroutine_init(void) {
@@ -196,6 +265,21 @@ save_ctx_and_switch_to_next_ready(void *sp, bool is_ready) {
   if (is_ready)
     push_ready_coroutine(cur_ctx->id);
   switch_to_next_ready();
+}
+
+bool coroutine_wait_fd(int fd, EventType events_mask) {
+  CoroutineContext *coro = cur_context();
+  coro->wait_info =
+      (WaitInfo){.fd = fd, .events_mask = events_mask, .satisfied = false};
+  da_append(&waiting_coroutines, coro->id);
+  LOG("Coroutine #%u waits for fd %d, events = %d\n", coro->id, fd,
+      events_mask);
+  coroutine_yield_not_ready();
+  bool satisfied = coro->wait_info.satisfied;
+  coro->wait_info = (WaitInfo){0};
+  LOG("Coroutine #%u request satisfied: %d for fd %d, events = %d\n", satisfied,
+      coro->id, fd, events_mask);
+  return satisfied;
 }
 
 unsigned coroutine_id(void) { return cur_context()->id; }
