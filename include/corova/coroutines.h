@@ -8,4 +8,5 @@ void coroutine_finish(void);
 unsigned coroutine_id(void);
 unsigned coroutines_alive(void);
 
+void coroutines_run(void);
 #endif // COROVA_COROUTINES_H

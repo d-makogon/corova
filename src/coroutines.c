@@ -201,3 +201,12 @@ save_ctx_and_switch_to_next_ready(void *sp, bool is_ready) {
 unsigned coroutine_id(void) { return cur_context()->id; }
 
 unsigned coroutines_alive(void) { return contexts.count; }
+
+void coroutines_run(void) {
+  assert(cur_context()->id == 0 && "Must be called from the main coroutine");
+  while (coroutines_alive() > 1) {
+    poll_waiting_coroutines();
+    coroutine_yield();
+  }
+  coroutine_finish();
+}
