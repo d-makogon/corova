@@ -23,25 +23,25 @@ set(LIB_SRC
 
 set(LIB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 set(LIB_INCLUDE
-  ${LIB_INCLUDE_DIR}/corova/coroutines.h
+  ${LIB_INCLUDE_DIR}/libloom/coroutines.h
 )
 
-set(SHARED_LIB_NAME corova_shared)
-set(STATIC_LIB_NAME corova_static)
+set(SHARED_LIB_NAME libloom_shared)
+set(STATIC_LIB_NAME libloom_static)
 
 add_library(${SHARED_LIB_NAME} SHARED
   ${LIB_SRC}
   ${LIB_INCLUDE}
 )
 
-set_target_properties(${SHARED_LIB_NAME} PROPERTIES OUTPUT_NAME "corova")
+set_target_properties(${SHARED_LIB_NAME} PROPERTIES OUTPUT_NAME "loom")
 
 add_library(${STATIC_LIB_NAME} STATIC
   ${LIB_SRC}
   ${LIB_INCLUDE}
 )
 
-set_target_properties(${STATIC_LIB_NAME} PROPERTIES OUTPUT_NAME "corova")
+set_target_properties(${STATIC_LIB_NAME} PROPERTIES OUTPUT_NAME "loom")
 
 # 2. Define include directories
 # PUBLIC means anything linking to this library also gets these headers

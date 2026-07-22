@@ -1,5 +1,5 @@
-#ifndef COROVA_COROUTINES_H
-#define COROVA_COROUTINES_H
+#ifndef LIBLOOM_COROUTINES_H
+#define LIBLOOM_COROUTINES_H
 
 void coroutine_init(void);
 void coroutine_go(void (*job)(void *), void *arg);
@@ -15,4 +15,4 @@ unsigned coroutine_id(void);
 unsigned coroutines_alive(void);
 
 void coroutines_run(void);
-#endif // COROVA_COROUTINES_H
+#endif // LIBLOOM_COROUTINES_H
