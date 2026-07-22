@@ -44,10 +44,18 @@ This produces:
 - `build/libloom.dylib`: shared library
 - `build/examples/*`: examples
 
-Run the basic example with:
+## Testing
+
+Run the test suite with:
 
 ```sh
-./build/examples/counters
+ninja test
+```
+
+or
+
+```sh
+ctest --test-dir path/to/build --output-on-failure
 ```
 
 ## Basic Usage
@@ -90,6 +98,14 @@ coroutine_wait_fd(fd, CORO_WAIT_READ);
 coroutine_wait_fd(fd, CORO_WAIT_WRITE);
 ```
 
+See basic usage examples in [examples](examples).
+
+Run them with:
+
+```sh
+./build/examples/counters
+```
+
 ## Use In Another CMake Project
 
 Build `clib` first, set its paths, and add libloom as a subdirectory:
@@ -111,11 +127,11 @@ target_link_libraries(example PRIVATE libloom_static)
 ```
 
 Use `libloom_shared` instead of `libloom_static` for dynamic linking. Linking the
-CMake target adds the libloom and `clib` include directories transitively.
+CMake target adds the `libloom` and `clib` include directories transitively.
 
 ## Use A Built Library Directly
 
-Compile against both libloom and `clib`:
+Compile against both `libloom` and `clib`:
 
 ```sh
 cc -std=gnu2x main.c \
