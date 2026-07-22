@@ -1,13 +1,13 @@
-# Corova
+# libloom
 
-Corova is a small cooperative stackful coroutine library for C.
+libloom is a small cooperative stackful coroutine library for C.
 
 Coroutines run on one thread and switch only when they yield, wait for an fd,
 or return.
 
 ## Platform Support
 
-Corova currently supports **Apple arm64 only**.
+libloom currently supports **Apple arm64 only**.
 
 This is an experimental implementation. Coroutine stacks are currently fixed
 at 4 KiB.
@@ -29,7 +29,7 @@ cmake -S /path/to/clib -B /path/to/clib/build -G Ninja
 cmake --build /path/to/clib/build
 ```
 
-Then configure Corova with the `clib` library and include directories:
+Then configure libloom with the `clib` library and include directories:
 
 ```sh
 cmake -S . -B build -G Ninja \
@@ -40,8 +40,8 @@ cmake --build build
 
 This produces:
 
-- `build/libcorova.a`: static library
-- `build/libcorova.dylib`: shared library
+- `build/libloom.a`: static library
+- `build/libloom.dylib`: shared library
 - `build/examples/*`: examples
 
 Run the basic example with:
@@ -58,7 +58,7 @@ jobs return:
 ```c
 #include <stdbool.h>
 #include <stdio.h>
-#include <corova/coroutines.h>
+#include <libloom/coroutines.h>
 
 static void counter(void *argument) {
   unsigned limit = *(const unsigned *)argument;
@@ -92,7 +92,7 @@ coroutine_wait_fd(fd, CORO_WAIT_WRITE);
 
 ## Use In Another CMake Project
 
-Build `clib` first, set its paths, and add Corova as a subdirectory:
+Build `clib` first, set its paths, and add libloom as a subdirectory:
 
 ```cmake
 cmake_minimum_required(VERSION 3.10)
@@ -104,24 +104,24 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CLIB_LIBRARY_PATH "/absolute/path/to/clib/build")
 set(CLIB_INCLUDE_PATH "/absolute/path/to/clib/include")
 
-add_subdirectory(/absolute/path/to/coroutines corova)
+add_subdirectory(/absolute/path/to/coroutines libloom)
 
 add_executable(example main.c)
-target_link_libraries(example PRIVATE corova_static)
+target_link_libraries(example PRIVATE libloom_static)
 ```
 
-Use `corova_shared` instead of `corova_static` for dynamic linking. Linking the
-CMake target adds the Corova and `clib` include directories transitively.
+Use `libloom_shared` instead of `libloom_static` for dynamic linking. Linking the
+CMake target adds the libloom and `clib` include directories transitively.
 
 ## Use A Built Library Directly
 
-Compile against both Corova and `clib`:
+Compile against both libloom and `clib`:
 
 ```sh
 cc -std=gnu2x main.c \
   -I/path/to/coroutines/include \
   -I/path/to/clib/include \
-  /path/to/coroutines/build/libcorova.a \
+  /path/to/coroutines/build/libloom.a \
   /path/to/clib/build/libclib.a \
   -o example
 ```

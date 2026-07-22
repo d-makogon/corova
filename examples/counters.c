@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include <corova/coroutines.h>
+#include <libloom/coroutines.h>
 
 void counter(void *arg) {
   for (unsigned i = (int)arg; i-- > 0;) {
