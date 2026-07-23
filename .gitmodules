@@ -1,0 +1,3 @@
+[submodule "external/clib"]
+	path = external/clib
+	url = https://github.com/d-makogon/clib.git

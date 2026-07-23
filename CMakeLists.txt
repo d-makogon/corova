@@ -4,18 +4,14 @@ project(CorovaCoroutinesLib VERSION 1.0.0 LANGUAGES C)
 set(CMAKE_C_STANDARD 23)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-if(NOT DEFINED CLIB_LIBRARY_PATH)
-  message(FATAL_ERROR "CLIB_LIBRARY_PATH must be defined. It must be set to the directory path with the libclib library.")
+set(CLIB_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/clib")
+
+if(NOT EXISTS "${CLIB_SOURCE_DIR}/CMakeLists.txt")
+  message(FATAL_ERROR
+    "The clib submodule is missing. Run: git submodule update --init --recursive")
 endif()
 
-if(NOT DEFINED CLIB_INCLUDE_PATH)
-  message(FATAL_ERROR "CLIB_INCLUDE_PATH must be defined. It must be set to the directory path with the clib includes.")
-endif()
-
-find_library(CLIB_PATH
-  NAMES clib
-  PATHS ${CLIB_LIBRARY_PATH}
-  REQUIRED)
+add_subdirectory("${CLIB_SOURCE_DIR}")
 
 set(LIB_SRC
   src/coroutines.c
@@ -48,17 +44,15 @@ set_target_properties(${STATIC_LIB_NAME} PROPERTIES OUTPUT_NAME "loom")
 target_include_directories(${SHARED_LIB_NAME} PUBLIC
   $<BUILD_INTERFACE:${LIB_INCLUDE_DIR}>
   $<INSTALL_INTERFACE:include>
-  ${CLIB_INCLUDE_PATH}
 )
 
 target_include_directories(${STATIC_LIB_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
-  ${CLIB_INCLUDE_PATH}
 )
 
-target_link_libraries(${SHARED_LIB_NAME} ${CLIB_PATH})
-target_link_libraries(${STATIC_LIB_NAME} ${CLIB_PATH})
+target_link_libraries(${SHARED_LIB_NAME} PRIVATE clib_shared)
+target_link_libraries(${STATIC_LIB_NAME} PRIVATE clib_static)
 
 set(COMPILER_OPTIONS
   -Wall

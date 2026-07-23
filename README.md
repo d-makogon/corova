@@ -17,24 +17,22 @@ at 4 KiB.
 - macOS on Apple silicon
 - CMake 3.10 or newer
 - A C23 compiler, such as Clang
-- The `clib` library built locally
+- Git (to initialize the `clib` submodule)
 - Ninja or another CMake-supported build tool
 
 ## Build
 
-Build [clib](https://github.com/d-makogon/clib) first:
+Clone libloom with its submodules:
 
 ```sh
-cmake -S /path/to/clib -B /path/to/clib/build -G Ninja
-cmake --build /path/to/clib/build
+git clone --recurse-submodules https://github.com/d-makogon/corova.git libloom
+cd libloom
 ```
 
-Then configure libloom with the `clib` library and include directories:
+Then configure and build libloom:
 
 ```sh
-cmake -S . -B build -G Ninja \
-  -DCLIB_LIBRARY_PATH=/path/to/clib/build \
-  -DCLIB_INCLUDE_PATH=/path/to/clib/include
+cmake -S . -B build -G Ninja
 cmake --build build
 ```
 
@@ -108,7 +106,7 @@ Run them with:
 
 ## Use In Another CMake Project
 
-Build `clib` first, set its paths, and add libloom as a subdirectory:
+Initialize libloom's submodules, then add it as a subdirectory:
 
 ```cmake
 cmake_minimum_required(VERSION 3.10)
@@ -117,9 +115,6 @@ project(example LANGUAGES C)
 set(CMAKE_C_STANDARD 23)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-set(CLIB_LIBRARY_PATH "/absolute/path/to/clib/build")
-set(CLIB_INCLUDE_PATH "/absolute/path/to/clib/include")
-
 add_subdirectory(/absolute/path/to/coroutines libloom)
 
 add_executable(example main.c)
@@ -127,17 +122,16 @@ target_link_libraries(example PRIVATE libloom_static)
 ```
 
 Use `libloom_shared` instead of `libloom_static` for dynamic linking. Linking the
-CMake target adds the `libloom` and `clib` include directories transitively.
+CMake target provides the libraries required by libloom.
 
 ## Use A Built Library Directly
 
-Compile against both `libloom` and `clib`:
+Compile against both `libloom` and the bundled `clib`:
 
 ```sh
 cc -std=gnu2x main.c \
   -I/path/to/coroutines/include \
-  -I/path/to/clib/include \
   /path/to/coroutines/build/libloom.a \
-  /path/to/clib/build/libclib.a \
+  /path/to/coroutines/build/external/clib/libclib.a \
   -o example
 ```
